@@ -18,6 +18,7 @@
       --text: #f8fafc;
       --text-muted: #94a3b8;
       --danger: #ff0055;
+      --success: #10b981;
     }
 
     * {
@@ -40,7 +41,6 @@
       justify-content: center;
       align-items: center;
       padding: 24px 16px;
-      overflow-x: hidden;
     }
 
     .container {
@@ -49,12 +49,10 @@
       display: flex;
       flex-direction: column;
       gap: 24px;
-      position: relative;
     }
 
     .tech-header {
       text-align: center;
-      position: relative;
     }
 
     .tech-tag {
@@ -77,7 +75,6 @@
       background: linear-gradient(135deg, #fff 30%, var(--cyan) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
-      letter-spacing: -0.5px;
     }
 
     .card {
@@ -87,9 +84,8 @@
       border: 1px solid var(--border-color);
       border-radius: 16px;
       padding: 24px;
-      box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(0, 242, 254, 0.03);
+      box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
       position: relative;
-      overflow: hidden;
     }
 
     .card::before {
@@ -120,7 +116,6 @@
       padding: 0 16px;
       border-radius: 10px;
       border: 1px solid var(--border-color);
-      text-shadow: 0 0 8px var(--cyan-glow);
     }
 
     input {
@@ -134,7 +129,6 @@
       font-family: 'Chakra Petch', sans-serif;
       letter-spacing: 2px;
       outline: none;
-      transition: all 0.3s ease;
     }
 
     input:focus {
@@ -149,19 +143,8 @@
       padding: 0 24px;
       border-radius: 10px;
       font-weight: 800;
-      font-size: 1rem;
       cursor: pointer;
-      transition: all 0.3s ease;
       box-shadow: 0 0 15px var(--cyan-glow);
-    }
-
-    button:hover {
-      box-shadow: 0 0 25px rgba(0, 242, 254, 0.6);
-      transform: translateY(-1px);
-    }
-
-    button:active {
-      transform: translateY(1px);
     }
 
     .state-info {
@@ -170,7 +153,6 @@
       padding: 16px;
       font-weight: 700;
       border-radius: 10px;
-      animation: fadeIn 0.3s ease;
     }
 
     #loading {
@@ -187,12 +169,6 @@
 
     .result-card {
       display: none;
-      animation: scanEffect 0.4s ease forwards;
-    }
-
-    @keyframes scanEffect {
-      from { opacity: 0; transform: translateY(12px) scale(0.99); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     .data-row {
@@ -205,11 +181,6 @@
 
     .data-row:last-child {
       border-bottom: none;
-      padding-bottom: 0;
-    }
-
-    .data-row:first-child {
-      padding-top: 0;
     }
 
     .data-label {
@@ -223,22 +194,27 @@
     .data-label::before {
       content: '◈';
       color: var(--cyan);
-      font-size: 0.8rem;
     }
 
     .data-value {
       font-weight: 700;
       color: #fff;
-      font-size: 1.05rem;
-      text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
     }
+
+    .status-badge {
+      padding: 2px 10px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    .status-ok { background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid var(--success); }
+    .status-bad { background: rgba(255, 0, 85, 0.2); color: var(--danger); border: 1px solid var(--danger); }
   </style>
 </head>
 <body>
 
   <div class="container">
     <div class="tech-header">
-      <span class="tech-tag">DATA CORE LINK</span>
+      <span class="tech-tag">INVENTORY SYSTEM</span>
       <h1>نظام الاستعلام عن العناصر</h1>
     </div>
 
@@ -252,7 +228,7 @@
       </form>
     </div>
 
-    <div id="loading" class="state-info">جارٍ البحث عن العنصر...</div>
+    <div id="loading" class="state-info">جارٍ فحص قاعدة البيانات...</div>
     <div id="notFound" class="state-info">لا يوجد عنصر مسجل بهذا الكود</div>
 
     <div id="resultCard" class="card result-card">
@@ -261,7 +237,7 @@
   </div>
 
   <script>
-    const API_URL = "https://script.google.com/macros/s/AKfycbzpgA-CII-3jDO0OBMdns2JE7VyGjweSG9L_1AUNiBcVUmMTob35RvLz5wlBQ4gQIIO/exec";
+    const API_URL = "https://script.google.com/macros/s/AKfycbxaa3O5TrKVaFGCfj40sMc65TV-B1xO9FT58bEeALTNcWJdCa0MmCUKzTzf67uyo1vfHw/exec";
 
     function formatCode(val) {
       let clean = val.trim().toUpperCase();
@@ -271,11 +247,10 @@
       return "S-" + clean;
     }
 
-    function renameField(key) {
+    function cleanFieldName(key) {
       let trimmed = key.trim();
-      if (trimmed === "كود الكابل") return "كود العنصر";
-      if (trimmed === "نوع الكابل") return "العنصر";
-      if (trimmed === "تصنيف الكابل") return "حالة العنصر";
+      if (trimmed === "نوع العنصر" || trimmed === "نوع الكابل") return "العنصر";
+      if (trimmed === "تصنيف العنصر" || trimmed === "تصنيف الكابل") return "التصنيف";
       return trimmed.replace(/كابل/g, "عنصر").replace(/الكابل/g, "العنصر");
     }
 
@@ -305,12 +280,24 @@
           const data = json.data;
 
           for (const [key, value] of Object.entries(data)) {
-            const fieldName = renameField(key);
+            if (key === "تم تركيب الكود") continue;
+
+            const fieldName = cleanFieldName(key);
+            let displayVal = value !== "" ? value : "—";
+
+            if (fieldName === "حالة العنصر") {
+              if (String(value).includes("سليم")) {
+                displayVal = `<span class="status-badge status-ok">${value}</span>`;
+              } else if (String(value).includes("تالف")) {
+                displayVal = `<span class="status-badge status-bad">${value}</span>`;
+              }
+            }
+
             const row = document.createElement("div");
             row.className = "data-row";
             row.innerHTML = `
               <span class="data-label">${fieldName}</span>
-              <span class="data-value">${value || "—"}</span>
+              <span class="data-value">${displayVal}</span>
             `;
             details.appendChild(row);
           }
@@ -321,7 +308,7 @@
         }
       } catch (err) {
         loading.style.display = "none";
-        alert("حدث خطأ في الاتصال");
+        alert("حدث خطأ في الاتصال بقاعدة البيانات");
       }
     }
   </script>
