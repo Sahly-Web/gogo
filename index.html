@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>نظام الاستعلام عن العناصر</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #030712;
+      --panel-bg: rgba(15, 23, 42, 0.75);
+      --cyan: #00f2fe;
+      --cyan-glow: rgba(0, 242, 254, 0.4);
+      --accent: #4facfe;
+      --border-color: rgba(0, 242, 254, 0.2);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --danger: #ff0055;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Tajawal', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(ellipse at 50% -20%, rgba(0, 242, 254, 0.15), transparent 70%),
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 30px 30px, 30px 30px;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px 16px;
+      overflow-x: hidden;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      position: relative;
+    }
+
+    .tech-header {
+      text-align: center;
+      position: relative;
+    }
+
+    .tech-tag {
+      font-family: 'Chakra Petch', sans-serif;
+      font-size: 0.75rem;
+      letter-spacing: 3px;
+      color: var(--cyan);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      display: inline-block;
+      border: 1px solid var(--border-color);
+      padding: 2px 10px;
+      border-radius: 4px;
+      background: rgba(0, 242, 254, 0.05);
+    }
+
+    .tech-header h1 {
+      font-size: 2rem;
+      font-weight: 900;
+      background: linear-gradient(135deg, #fff 30%, var(--cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    .card {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(0, 242, 254, 0.03);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 40px;
+      height: 2px;
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+    }
+
+    .input-wrapper {
+      display: flex;
+      gap: 10px;
+      direction: ltr;
+    }
+
+    .prefix-badge {
+      font-family: 'Chakra Petch', sans-serif;
+      background: rgba(0, 242, 254, 0.08);
+      color: var(--cyan);
+      font-weight: 700;
+      font-size: 1.15rem;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+      text-shadow: 0 0 8px var(--cyan-glow);
+    }
+
+    input {
+      flex: 1;
+      background: rgba(3, 7, 18, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      padding: 14px 16px;
+      border-radius: 10px;
+      font-size: 1.1rem;
+      font-family: 'Chakra Petch', sans-serif;
+      letter-spacing: 2px;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    input:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 15px rgba(0, 242, 254, 0.25);
+    }
+
+    button {
+      background: linear-gradient(135deg, var(--cyan), var(--accent));
+      color: #030712;
+      border: none;
+      padding: 0 24px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 0 15px var(--cyan-glow);
+    }
+
+    button:hover {
+      box-shadow: 0 0 25px rgba(0, 242, 254, 0.6);
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .state-info {
+      display: none;
+      text-align: center;
+      padding: 16px;
+      font-weight: 700;
+      border-radius: 10px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    #loading {
+      color: var(--cyan);
+      background: rgba(0, 242, 254, 0.05);
+      border: 1px dashed var(--border-color);
+    }
+
+    #notFound {
+      color: var(--danger);
+      background: rgba(255, 0, 85, 0.08);
+      border: 1px solid rgba(255, 0, 85, 0.3);
+    }
+
+    .result-card {
+      display: none;
+      animation: scanEffect 0.4s ease forwards;
+    }
+
+    @keyframes scanEffect {
+      from { opacity: 0; transform: translateY(12px) scale(0.99); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .data-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .data-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .data-row:first-child {
+      padding-top: 0;
+    }
+
+    .data-label {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .data-label::before {
+      content: '◈';
+      color: var(--cyan);
+      font-size: 0.8rem;
+    }
+
+    .data-value {
+      font-weight: 700;
+      color: #fff;
+      font-size: 1.05rem;
+      text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <div class="tech-header">
+      <span class="tech-tag">DATA CORE LINK</span>
+      <h1>نظام الاستعلام عن العناصر</h1>
+    </div>
+
+    <div class="card">
+      <form id="searchForm" onsubmit="handleSearch(event)">
+        <div class="input-wrapper">
+          <span class="prefix-badge">S-</span>
+          <input type="text" id="codeInput" placeholder="0001" autocomplete="off" required />
+          <button type="submit">بحث</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="loading" class="state-info">جارٍ البحث عن العنصر...</div>
+    <div id="notFound" class="state-info">لا يوجد عنصر مسجل بهذا الكود</div>
+
+    <div id="resultCard" class="card result-card">
+      <div id="details"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/AKfycbzpgA-CII-3jDO0OBMdns2JE7VyGjweSG9L_1AUNiBcVUmMTob35RvLz5wlBQ4gQIIO/exec";
+
+    function formatCode(val) {
+      let clean = val.trim().toUpperCase();
+      if (clean.startsWith("S-")) clean = clean.replace("S-", "");
+      else if (clean.startsWith("S")) clean = clean.substring(1);
+      if (/^\d+$/.test(clean)) clean = clean.padStart(4, "0");
+      return "S-" + clean;
+    }
+
+    function renameField(key) {
+      let trimmed = key.trim();
+      if (trimmed === "كود الكابل") return "كود العنصر";
+      if (trimmed === "نوع الكابل") return "العنصر";
+      if (trimmed === "تصنيف الكابل") return "حالة العنصر";
+      return trimmed.replace(/كابل/g, "عنصر").replace(/الكابل/g, "العنصر");
+    }
+
+    async function handleSearch(e) {
+      e.preventDefault();
+      const input = document.getElementById("codeInput");
+      const val = input.value.trim();
+      if (!val) return;
+
+      const code = formatCode(val);
+      const loading = document.getElementById("loading");
+      const notFound = document.getElementById("notFound");
+      const resultCard = document.getElementById("resultCard");
+      const details = document.getElementById("details");
+
+      loading.style.display = "block";
+      notFound.style.display = "none";
+      resultCard.style.display = "none";
+      details.innerHTML = "";
+
+      try {
+        const res = await fetch(`${API_URL}?code=${encodeURIComponent(code)}`);
+        const json = await res.json();
+        loading.style.display = "none";
+
+        if (json.success && json.found && json.data) {
+          const data = json.data;
+
+          for (const [key, value] of Object.entries(data)) {
+            const fieldName = renameField(key);
+            const row = document.createElement("div");
+            row.className = "data-row";
+            row.innerHTML = `
+              <span class="data-label">${fieldName}</span>
+              <span class="data-value">${value || "—"}</span>
+            `;
+            details.appendChild(row);
+          }
+
+          resultCard.style.display = "block";
+        } else {
+          notFound.style.display = "block";
+        }
+      } catch (err) {
+        loading.style.display = "none";
+        alert("حدث خطأ في الاتصال");
+      }
+    }
+  </script>
+</body>
+</html>
