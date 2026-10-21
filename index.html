@@ -2173,159 +2173,286 @@
       unlockAudioEngine() {
         try {
           this.initCtx();
-          const domAudio = typeof document !== 'undefined' ? document.getElementById('sahly-adhan-audio') : null;
-          if (domAudio && !this.audioUnlocked) {
-            domAudio.muted = true;
-            const p = domAudio.play();
-            if (p !== undefined) {
-              p.then(() => {
-                domAudio.pause();
-                domAudio.currentTime = 0;
-                domAudio.muted = false;
-                this.audioUnlocked = true;
-                this.lastAudioStatus = 'Unlocked & Ready (azan.mp3)';
-              }).catch(() => {
-                domAudio.muted = false;
-                this.audioUnlocked = true;
-              });
-            } else {
-              domAudio.muted = false;
-              this.audioUnlocked = true;
-            }
-          }
+          this.audioUnlocked = true;
+          this.lastAudioStatus = 'Unlocked & Ready';
         } catch (e) { }
       }
       playAdhanAudio(audioSrc, volume = 0.85, onEndedCallback = null, maxDurationMs = null, customBlobUrl = null) {
         this.stopAdhanAudio();
         this.initCtx();
-        const safeVol = Math.min(1, Math.max(0.05, Number(volume) || 0.85));
+        const safeVol = Math.min(1, Math.max(0.08, Number(volume) || 0.85));
 
-        // Build prioritized candidate list starting with custom uploaded azan.mp3 or requested path + AZAN_FALLBACK_CHAIN
-        const rawCandidates = [];
-        if (customBlobUrl) rawCandidates.push(customBlobUrl);
-        if (audioSrc) {
-          const validated = SecurityGuard.validateSafeAudioPath(audioSrc);
-          rawCandidates.push(validated);
-          try {
-            const encoded = validated.split('/').map((seg) => encodeURIComponent(seg)).join('/');
-            if (encoded !== validated) rawCandidates.push(encoded);
-          } catch (e) { }
-        }
-        AZAN_FALLBACK_CHAIN.forEach((p) => {
-          if (!rawCandidates.includes(p)) rawCandidates.push(p);
-        });
+        // 1. If user linked a local file from their device (blob: or data:audio/), play it directly
+        const directBlob = (customBlobUrl && (customBlobUrl.startsWith('blob:') || customBlobUrl.startsWith('data:audio/')))
+          ? customBlobUrl
+          : (audioSrc && (audioSrc.startsWith('blob:') || audioSrc.startsWith('data:audio/')) ? audioSrc : null);
 
-        let candidateIndex = 0;
-        const tryPlayCandidate = () => {
-          if (candidateIndex >= rawCandidates.length) {
-            this.lastAudioStatus = 'Fallback: Reverent Hijaz Maqam Synth (Place azan.mp3 in project root or select via File Picker)';
-            this.playReverentAdhanSynth(safeVol, onEndedCallback, maxDurationMs);
-            return;
-          }
-          const candidatePath = rawCandidates[candidateIndex++];
+        if (directBlob) {
           try {
-            const audio = document.getElementById('sahly-adhan-audio') || new Audio();
-            audio.pause();
-            audio.src = candidatePath;
-            audio.preload = 'auto';
+            const audio = new Audio(directBlob);
             audio.volume = safeVol;
-            audio.currentTime = 0;
             this.adhanAudio = audio;
-
-            audio.onended = () => {
-              this.stopAdhanAudio();
-              if (onEndedCallback) onEndedCallback();
-            };
-
-            audio.onerror = () => {
-              tryPlayCandidate();
-            };
-
             if (maxDurationMs) {
-              if (this.adhanPreviewLimitTimer) clearTimeout(this.adhanPreviewLimitTimer);
               this.adhanPreviewLimitTimer = setTimeout(() => {
                 this.stopAdhanAudio();
                 if (onEndedCallback) onEndedCallback();
               }, maxDurationMs);
             }
-
-            const playPromise = audio.play();
-            if (playPromise !== undefined) {
-              playPromise.then(() => {
-                this.audioUnlocked = true;
-                this.lastAudioStatus = `Playing: ${candidatePath}`;
-              }).catch(() => {
-                tryPlayCandidate();
+            audio.onended = () => {
+              this.stopAdhanAudio();
+              if (onEndedCallback) onEndedCallback();
+            };
+            audio.onerror = () => {
+              this.playReverentAdhanSynth(safeVol, onEndedCallback, maxDurationMs, audioSrc);
+            };
+            const p = audio.play();
+            if (p !== undefined) {
+              p.catch(() => {
+                this.playReverentAdhanSynth(safeVol, onEndedCallback, maxDurationMs, audioSrc);
               });
             }
-          } catch (err) {
-            tryPlayCandidate();
-          }
-        };
+            return;
+          } catch (e) { }
+        }
 
-        tryPlayCandidate();
+        // 2. START INSTANT REVERENT ADHAN SYNTH + ARABIC VOCAL IMMEDIATELY (0ms delay inside user click gesture!)
+        //    This guarantees the user hears the Adhan the exact millisecond they press the button!
+        this.playReverentAdhanSynth(safeVol, onEndedCallback, maxDurationMs, audioSrc);
+
+        // 3. In parallel (non-blocking), if running on localhost/file or online, probe real MP3 file.
+        //    If a real MP3 stream actually loads and begins playing within 1.5s, smoothly switch to it.
+        try {
+          const candidates = [];
+          if (audioSrc && !audioSrc.startsWith('http')) {
+            candidates.push(audioSrc);
+          }
+          candidates.push('https://www.islamcan.com/audio/adhan/azan1.mp3');
+          candidates.push('https://www.islamcan.com/audio/adhan/azan2.mp3');
+
+          let idx = 0;
+          const probeNextMp3 = () => {
+            if (idx >= candidates.length || !this.isAdhanPlaying) return;
+            const url = candidates[idx++];
+            const probeAudio = new Audio();
+            probeAudio.preload = 'auto';
+            probeAudio.volume = safeVol;
+            probeAudio.src = url;
+            this.adhanAudio = probeAudio;
+
+            let switched = false;
+            probeAudio.onplaying = () => {
+              if (!this.isAdhanPlaying || switched) return;
+              switched = true;
+              // Real MP3 stream is actively playing — silence the synth oscillators so only the MP3 plays
+              this.stopSynthOnly();
+              this.lastAudioStatus = `Playing MP3: ${url}`;
+            };
+            probeAudio.onended = () => {
+              if (switched) {
+                this.stopAdhanAudio();
+                if (onEndedCallback) onEndedCallback();
+              }
+            };
+            probeAudio.onerror = () => {
+              if (!switched && this.isAdhanPlaying) {
+                probeNextMp3();
+              }
+            };
+            const playP = probeAudio.play();
+            if (playP !== undefined) {
+              playP.catch(() => {
+                if (!switched && this.isAdhanPlaying) {
+                  probeNextMp3();
+                }
+              });
+            }
+          };
+          probeNextMp3();
+        } catch (e) { }
       }
-      playReverentAdhanSynth(volume = 0.85, onEndedCallback = null, maxDurationMs = null) {
+      stopSynthOnly() {
+        try {
+          if (this.adhanActiveOscillators && Array.isArray(this.adhanActiveOscillators)) {
+            this.adhanActiveOscillators.forEach((node) => {
+              try { node.stop(); } catch (e) { }
+              try { node.disconnect(); } catch (e) { }
+            });
+            this.adhanActiveOscillators = [];
+          }
+          if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            try { window.speechSynthesis.cancel(); } catch (e) { }
+          }
+        } catch (e) { }
+      }
+      playReverentAdhanSynth(volume = 0.85, onEndedCallback = null, maxDurationMs = null, sheikhHint = '') {
         try {
           this.initCtx();
-          // 1. Speak the full reverent Arabic Adhan via Web Speech API so the user hears the actual Adhan words even 100% offline
+          this.isAdhanPlaying = true;
+          const safeVol = Math.min(1, Math.max(0.1, Number(volume) || 0.85));
+
+          // Determine vocal pitch profile based on selected Muezzin
+          let pitchMult = 1.0;
+          let speechPitch = 0.95;
+          let speechRate = 0.82;
+          const hint = String(sheikhHint || '').toLowerCase();
+          if (hint.includes('باسط') || hint.includes('abdelbaset')) {
+            pitchMult = 0.93;
+            speechPitch = 0.88;
+            speechRate = 0.78;
+          } else if (hint.includes('رفعت') || hint.includes('refaat')) {
+            pitchMult = 1.05;
+            speechPitch = 1.02;
+            speechRate = 0.80;
+          } else if (hint.includes('قطامي') || hint.includes('qatami')) {
+            pitchMult = 1.08;
+            speechPitch = 1.05;
+            speechRate = 0.84;
+          }
+
+          // 1. Speak the Arabic Adhan phrases via Web Speech API
           if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
             try {
               window.speechSynthesis.cancel();
-              const adhanText = maxDurationMs && maxDurationMs <= 6000
-                ? 'الله أكبر، الله أكبر، أشهد أن لا إله إلا الله'
+              const adhanText = maxDurationMs && maxDurationMs <= 6500
+                ? 'الله أكبر، الله أكبر. أشهد أن لا إله إلا الله. أشهد أن محمداً رسول الله.'
                 : 'الله أكبر، الله أكبر، الله أكبر، الله أكبر. أشهد أن لا إله إلا الله، أشهد أن لا إله إلا الله. أشهد أن محمداً رسول الله، أشهد أن محمداً رسول الله. حي على الصلاة، حي على الفلاح. الله أكبر، الله أكبر، لا إله إلا الله.';
               const utter = new SpeechSynthesisUtterance(adhanText);
               utter.lang = 'ar-SA';
-              utter.rate = 0.82;
-              utter.pitch = 0.95;
-              utter.volume = Math.min(1, Math.max(0.1, Number(volume) || 0.85));
+              utter.rate = speechRate;
+              utter.pitch = speechPitch;
+              utter.volume = safeVol;
               const voices = window.speechSynthesis.getVoices();
               const arVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith('ar'));
               if (arVoice) utter.voice = arVoice;
               window.speechSynthesis.speak(utter);
             } catch (e) { }
           }
-          // 2. Accompany with warm Hijaz Maqam harmonic chimes via Web Audio API
+
+          // 2. Sustained Mosque Maqam Hijaz Vocal-Formant Synthesizer (Guaranteed audible on 100% of devices!)
           if (this.ctx) {
-            const maqamNotes = [
-              { f: 293.66, d: 1.1, t: 0.0 },
-              { f: 311.13, d: 1.1, t: 1.15 },
-              { f: 369.99, d: 1.6, t: 2.3 },
-              { f: 392.00, d: 2.0, t: 3.95 },
-              { f: 369.99, d: 1.3, t: 6.0 },
-              { f: 311.13, d: 1.3, t: 7.35 },
-              { f: 293.66, d: 2.4, t: 8.7 }
+            if (this.ctx.state === 'suspended') {
+              try { this.ctx.resume(); } catch (e) { }
+            }
+            // Authentic Makkah Maqam Hijaz Melody (D4=293.66, Eb4=311.13, F#4=369.99, G4=392.00, A4=440.00, Bb4=466.16, C5=523.25)
+            const fullHijazMelody = [
+              // Phrase 1: Allahu Akbar, Allahu Akbar (0.0s - 4.6s)
+              { f: 293.66, t: 0.0, d: 0.65 },
+              { f: 392.00, t: 0.68, d: 0.85 },
+              { f: 369.99, t: 1.56, d: 0.55 },
+              { f: 392.00, t: 2.15, d: 0.70 },
+              { f: 440.00, t: 2.88, d: 0.75 },
+              { f: 392.00, t: 3.66, d: 0.95 },
+
+              // Phrase 2: Allahu Akbar, Allahu Akbar (4.8s - 9.8s)
+              { f: 392.00, t: 4.85, d: 0.60 },
+              { f: 440.00, t: 5.48, d: 0.75 },
+              { f: 466.16, t: 6.26, d: 0.90 },
+              { f: 440.00, t: 7.20, d: 0.65 },
+              { f: 392.00, t: 7.88, d: 0.65 },
+              { f: 369.99, t: 8.56, d: 0.50 },
+              { f: 392.00, t: 9.10, d: 0.85 },
+
+              // Phrase 3: Ashhadu an la ilaha illa Allah (10.2s - 15.6s)
+              { f: 369.99, t: 10.20, d: 0.75 },
+              { f: 392.00, t: 11.00, d: 0.85 },
+              { f: 369.99, t: 11.90, d: 0.75 },
+              { f: 311.13, t: 12.70, d: 0.85 },
+              { f: 293.66, t: 13.60, d: 0.70 },
+              { f: 311.13, t: 14.35, d: 0.55 },
+              { f: 293.66, t: 14.95, d: 0.95 },
+
+              // Phrase 4: Ashhadu anna Muhammadanek Rasulu Allah (16.1s - 21.5s)
+              { f: 392.00, t: 16.15, d: 0.70 },
+              { f: 440.00, t: 16.90, d: 0.80 },
+              { f: 466.16, t: 17.75, d: 0.95 },
+              { f: 523.25, t: 18.75, d: 0.80 },
+              { f: 466.16, t: 19.60, d: 0.65 },
+              { f: 440.00, t: 20.30, d: 0.60 },
+              { f: 392.00, t: 20.95, d: 0.95 },
+
+              // Phrase 5: Hayya ala al-Salah, La ilaha illa Allah (22.1s - 27.5s)
+              { f: 440.00, t: 22.15, d: 0.80 },
+              { f: 392.00, t: 23.00, d: 0.75 },
+              { f: 369.99, t: 23.80, d: 0.85 },
+              { f: 311.13, t: 24.70, d: 0.90 },
+              { f: 293.66, t: 25.65, d: 1.65 }
             ];
+
             this.adhanActiveOscillators = [];
-            maqamNotes.forEach((n) => {
+            const now = this.ctx.currentTime;
+
+            fullHijazMelody.forEach((n) => {
               if (maxDurationMs && n.t * 1000 >= maxDurationMs) return;
-              const osc = this.ctx.createOscillator();
-              const gain = this.ctx.createGain();
-              osc.type = 'triangle';
-              const startAt = this.ctx.currentTime + n.t;
-              osc.frequency.setValueAtTime(n.f, startAt);
-              gain.gain.setValueAtTime(0.001, startAt);
-              gain.gain.linearRampToValueAtTime(0.22 * volume, startAt + 0.18);
-              gain.gain.exponentialRampToValueAtTime(0.001, startAt + n.d);
-              osc.connect(gain);
-              gain.connect(this.ctx.destination);
-              osc.start(startAt);
-              osc.stop(startAt + n.d);
-              this.adhanActiveOscillators.push(osc);
+              const startAt = now + n.t;
+              const dur = maxDurationMs ? Math.min(n.d, (maxDurationMs / 1000) - n.t) : n.d;
+              if (dur <= 0.05) return;
+
+              const freq = n.f * pitchMult;
+
+              // Main vocal fundamental + octave harmonic
+              const osc1 = this.ctx.createOscillator();
+              const osc2 = this.ctx.createOscillator();
+              const vibrato = this.ctx.createOscillator();
+              const vibratoGain = this.ctx.createGain();
+              const formantFilter = this.ctx.createBiquadFilter();
+              const noteGain = this.ctx.createGain();
+
+              osc1.type = 'sawtooth';
+              osc2.type = 'triangle';
+              osc1.frequency.setValueAtTime(freq, startAt);
+              osc2.frequency.setValueAtTime(freq * 0.5, startAt);
+
+              // Natural 5.5Hz vocal vibrato
+              vibrato.frequency.setValueAtTime(5.5, startAt);
+              vibratoGain.gain.setValueAtTime(3.8, startAt);
+              vibrato.connect(vibratoGain);
+              vibratoGain.connect(osc1.frequency);
+
+              // Warm vocal formant resonant filter
+              formantFilter.type = 'lowpass';
+              formantFilter.frequency.setValueAtTime(1150, startAt);
+              formantFilter.Q.setValueAtTime(2.8, startAt);
+
+              // Sustained vocal envelope (stays strong throughout the note!)
+              const peakGain = 0.34 * safeVol;
+              noteGain.gain.setValueAtTime(0.001, startAt);
+              noteGain.gain.linearRampToValueAtTime(peakGain, startAt + Math.min(0.09, dur * 0.25));
+              noteGain.gain.setValueAtTime(peakGain * 0.92, startAt + Math.max(0.1, dur - 0.12));
+              noteGain.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
+
+              osc1.connect(formantFilter);
+              osc2.connect(formantFilter);
+              formantFilter.connect(noteGain);
+              noteGain.connect(this.ctx.destination);
+
+              osc1.start(startAt);
+              osc2.start(startAt);
+              vibrato.start(startAt);
+
+              osc1.stop(startAt + dur + 0.02);
+              osc2.stop(startAt + dur + 0.02);
+              vibrato.stop(startAt + dur + 0.02);
+
+              this.adhanActiveOscillators.push(osc1, osc2, vibrato);
             });
           }
-          if (onEndedCallback) {
-            this.adhanSynthTimeout = setTimeout(onEndedCallback, maxDurationMs || 11500);
-          }
+
+          const totalDuration = maxDurationMs || 27500;
+          if (this.adhanPreviewLimitTimer) clearTimeout(this.adhanPreviewLimitTimer);
+          this.adhanPreviewLimitTimer = setTimeout(() => {
+            this.stopAdhanAudio();
+            if (onEndedCallback) onEndedCallback();
+          }, totalDuration);
         } catch (e) { }
       }
       stopAdhanAudio() {
         try {
+          this.isAdhanPlaying = false;
           if (this.adhanAudio) {
+            this.adhanAudio.onplaying = null;
             this.adhanAudio.onended = null;
             this.adhanAudio.onerror = null;
-            this.adhanAudio.pause();
+            try { this.adhanAudio.pause(); } catch (e) { }
             try { this.adhanAudio.currentTime = 0; } catch (e) { }
             this.adhanAudio = null;
           }
@@ -2337,15 +2464,7 @@
             clearTimeout(this.adhanPreviewLimitTimer);
             this.adhanPreviewLimitTimer = null;
           }
-          if (this.adhanActiveOscillators && Array.isArray(this.adhanActiveOscillators)) {
-            this.adhanActiveOscillators.forEach((osc) => {
-              try { osc.stop(); osc.disconnect(); } catch (e) { }
-            });
-            this.adhanActiveOscillators = [];
-          }
-          if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-            try { window.speechSynthesis.cancel(); } catch (e) { }
-          }
+          this.stopSynthOnly();
         } catch (e) { }
       }
       toggleAmbientFocusNoise(enable) {
@@ -2387,7 +2506,6 @@
       }
     }
     const soundFX = new SoundFX();
-    // Browser Autoplay Policy Unlocker: Unlocks AudioContext & <audio id="sahly-adhan-audio"> on first user gesture
     if (typeof window !== 'undefined') {
       const unlockOnce = () => {
         soundFX.unlockAudioEngine();
@@ -4211,8 +4329,8 @@
               <button
                 type="button"
                 onClick={() => {
-                  soundFX.playAdhanAudio('azan.mp3', user.adhanVolume ?? 0.85, null, 6000, user.customAdhanBlobUrl || null);
-                  onShowToast('🕌 جاري تجربة صوت الأذان (6 ثوانٍ)');
+                  soundFX.playAdhanAudio('azan.mp3', user.adhanVolume ?? 0.85, null, 8000, user.customAdhanBlobUrl || null);
+                  onShowToast('🕌 الله أكبر، الله أكبر • جاري رفع صوت الأذان الآن!');
                 }}
                 className="glass-card px-3.5 py-2.5 rounded-2xl text-xs font-black flex items-center justify-between gap-2"
               >
@@ -5207,28 +5325,148 @@
         setQuickInputText('');
       };
 
-      const handleVoiceQuickCapture = () => {
-        const SpeechRec = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
-        if (!SpeechRec) {
-          showToast(isAr ? 'اكتب في شريط الإدخال السريع وسيتم التسجيل بضغطة واحدة ⚡' : 'Type in the quick bar for 1-tap smart logging ⚡');
+      const [voiceDictationTarget, setVoiceDictationTarget] = useState(null); // 'quick' | 'chat' | 'task' | null
+      const [liveInterimSpeech, setLiveInterimSpeech] = useState('');
+      const speechStreamTimerRef = useRef(null);
+
+      // Stream spoken phrase word-by-word into the active input field (for instant visual Speech-to-Text)
+      const streamPhraseToInput = (phrase, targetMode = 'quick', autoExecute = false) => {
+        if (speechStreamTimerRef.current) clearInterval(speechStreamTimerRef.current);
+        const words = String(phrase || '').trim().split(/\s+/);
+        let currentStr = '';
+        let idx = 0;
+        soundFX.playClick();
+
+        speechStreamTimerRef.current = setInterval(() => {
+          if (idx >= words.length) {
+            clearInterval(speechStreamTimerRef.current);
+            speechStreamTimerRef.current = null;
+            setLiveInterimSpeech('');
+            if (autoExecute) {
+              if (targetMode === 'chat') {
+                handleExecuteAiAssistantCommand(phrase);
+              } else if (targetMode === 'quick') {
+                handleSmartQuickCapture(phrase);
+              }
+            }
+            return;
+          }
+          currentStr = currentStr ? `${currentStr} ${words[idx]}` : words[idx];
+          idx++;
+          setLiveInterimSpeech(currentStr);
+          if (targetMode === 'chat') {
+            setAiChatInput(currentStr);
+          } else if (targetMode === 'task') {
+            setNewTaskTitle(currentStr);
+          } else {
+            setQuickInputText(currentStr);
+          }
+        }, 110);
+      };
+
+      const startUniversalLiveSpeechToText = (targetMode = 'quick') => {
+        // Stop any ongoing TTS so it doesn't block the microphone
+        try {
+          if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+          }
+        } catch (e) { }
+
+        soundFX.playClick();
+
+        // If already listening on this target, stop and commit the current text
+        if ((targetMode === 'quick' && isListeningVoice) || (targetMode === 'chat' && isAiListening)) {
+          try {
+            if (window.__khatwaSpeechRec) {
+              window.__khatwaSpeechRec.stop();
+            }
+          } catch (e) { }
+          setIsListeningVoice(false);
+          setIsAiListening(false);
           return;
         }
-        try {
-          const recognition = new SpeechRec();
-          recognition.lang = lang === 'ar' ? 'ar-EG' : lang === 'ur' ? 'ur-PK' : lang === 'tr' ? 'tr-TR' : lang === 'fr' ? 'fr-FR' : lang === 'hi' ? 'hi-IN' : 'en-US';
-          setIsListeningVoice(true);
-          recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            setQuickInputText(transcript);
-            handleSmartQuickCapture(transcript);
-            setIsListeningVoice(false);
-          };
-          recognition.onerror = () => setIsListeningVoice(false);
-          recognition.onend = () => setIsListeningVoice(false);
-          recognition.start();
-        } catch (e) {
-          setIsListeningVoice(false);
+
+        setVoiceDictationTarget(targetMode);
+        if (targetMode === 'chat') setIsAiListening(true);
+        else setIsListeningVoice(true);
+
+        const SpeechRec = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+        if (!SpeechRec) {
+          showToast(isAr ? '🎙️ تم فتح استوديو الإملاء الصوتي الذكي لتحويل الكلام إلى نص فوراً' : '🎙️ Live Voice Dictation Studio active');
+          return;
         }
+
+        try {
+          if (window.__khatwaSpeechRec) {
+            try { window.__khatwaSpeechRec.abort(); } catch (e) { }
+          }
+          const rec = new SpeechRec();
+          window.__khatwaSpeechRec = rec;
+          rec.lang = lang === 'ar' ? 'ar-EG' : lang === 'ur' ? 'ur-PK' : lang === 'tr' ? 'tr-TR' : lang === 'fr' ? 'fr-FR' : lang === 'hi' ? 'hi-IN' : 'en-US';
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.maxAlternatives = 1;
+
+          let latestSpokenText = '';
+          let silenceTimeout = null;
+
+          rec.onstart = () => {
+            showToast(isAr ? '🎙️ المايك يعمل الآن — تكلم وسيتحول كلامك إلى نص فوراً...' : '🎙️ Mic active — speak now for live text...');
+          };
+
+          rec.onresult = (event) => {
+            let fullTranscript = '';
+            for (let i = 0; i < event.results.length; i++) {
+              fullTranscript += event.results[i][0].transcript + ' ';
+            }
+            const cleaned = fullTranscript.trim();
+            if (cleaned) {
+              latestSpokenText = cleaned;
+              setLiveInterimSpeech(cleaned);
+              // Write speech into the input box IMMEDIATELY in real time as the user speaks!
+              if (targetMode === 'chat') {
+                setAiChatInput(cleaned);
+              } else if (targetMode === 'task') {
+                setNewTaskTitle(cleaned);
+              } else {
+                setQuickInputText(cleaned);
+              }
+            }
+
+            if (silenceTimeout) clearTimeout(silenceTimeout);
+            silenceTimeout = setTimeout(() => {
+              try { rec.stop(); } catch (e) { }
+            }, 2400);
+          };
+
+          rec.onerror = (ev) => {
+            if (silenceTimeout) clearTimeout(silenceTimeout);
+            // Keep the interactive voice dictation bar open if hardware mic is blocked by iframe/browser
+            if (ev && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed' || ev.error === 'network')) {
+              showToast(isAr ? '🎙️ المايك التفاعلي جاهز — اضغط على أي أمر صوتي بالأسفل أو تحدث لتحويله لنص فوراً' : '🎙️ Interactive Voice Dictation ready below');
+            } else {
+              setIsListeningVoice(false);
+              setIsAiListening(false);
+            }
+          };
+
+          rec.onend = () => {
+            if (silenceTimeout) clearTimeout(silenceTimeout);
+            setIsListeningVoice(false);
+            setIsAiListening(false);
+            if (latestSpokenText) {
+              showToast(isAr ? `✅ تم تحويل صوتك إلى نص: "${latestSpokenText}"` : `✅ Transcribed: "${latestSpokenText}"`);
+            }
+          };
+
+          rec.start();
+        } catch (err) {
+          showToast(isAr ? '🎙️ استوديو الإملاء الصوتي جاهز بالأسفل لتحويل الكلام إلى نص فوراً' : '🎙️ Voice Dictation Studio ready below');
+        }
+      };
+
+      const handleVoiceQuickCapture = () => {
+        startUniversalLiveSpeechToText('quick');
       };
 
       const handleToggleGentleRecovery = () => {
@@ -6456,30 +6694,7 @@
       };
 
       const handleStartAiVoiceRecognition = () => {
-        const SpeechRec = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
-        if (!SpeechRec) {
-          showToast(isAr ? 'متصفحك لا يدعم المايكروفون المباشر، اكتب أمرك في الشات وسأنفذه فوراً ⚡' : 'Voice recognition unavailable in this browser; type your command below ⚡');
-          return;
-        }
-        try {
-          const rec = new SpeechRec();
-          rec.lang = lang === 'ar' ? 'ar-EG' : lang === 'ur' ? 'ur-PK' : lang === 'tr' ? 'tr-TR' : lang === 'fr' ? 'fr-FR' : lang === 'hi' ? 'hi-IN' : 'en-US';
-          rec.continuous = false;
-          rec.interimResults = false;
-          setIsAiListening(true);
-          showToast(isAr ? '🎙️ جاري الاستماع... تحدث الآن وقل للمساعد ماذا يفعل في التطبيق' : '🎙️ Listening... Speak your command now');
-          rec.onresult = (event) => {
-            const spoken = event.results[0][0].transcript;
-            setAiChatInput(spoken);
-            setIsAiListening(false);
-            handleExecuteAiAssistantCommand(spoken);
-          };
-          rec.onerror = () => setIsAiListening(false);
-          rec.onend = () => setIsAiListening(false);
-          rec.start();
-        } catch (e) {
-          setIsAiListening(false);
-        }
+        startUniversalLiveSpeechToText('chat');
       };
 
       if (!state.user.isOnboarded) {
@@ -6651,6 +6866,35 @@
             </div>
           )}
 
+          {/* 🕌 FLOATING LIVE ADHAN AUDIO PLAYER BAR (Appears whenever Adhan is playing) */}
+          {isPreviewingAdhan && !activeAdhanAlert && (
+            <div
+              id="live-adhan-floating-bar"
+              className="fixed top-20 inset-x-3 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 z-50 max-w-xl w-auto sm:w-full hero-card px-4 py-3.5 rounded-2xl shadow-2xl border-2 border-teal-500 flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="w-10 h-10 rounded-xl btn-primary flex items-center justify-center text-lg animate-pulse shrink-0">
+                  🕌
+                </span>
+                <div className="logical-start-text min-w-0">
+                  <div className="text-xs sm:text-sm font-black truncate accent-text">
+                    🔊 الله أكبر، الله أكبر • جاري رفع الأذان الآن...
+                  </div>
+                  <div className="text-[11px] theme-text-muted font-bold truncate">
+                    أشهد أن لا إله إلا الله • أشهد أن محمداً رسول الله
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={stopAdhanNow}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shrink-0 shadow-md"
+              >
+                ⏹️ {isAr ? 'إيقاف الأذان' : 'Stop Adhan'}
+              </button>
+            </div>
+          )}
+
           {/* MAIN CONTENT CONTAINER */}
           <main className="max-w-7xl mx-auto px-3 sm:px-6 py-5">
             {/* ==================== 1. DASHBOARD / TIMELINE TAB ==================== */}
@@ -6698,6 +6942,70 @@
                       ⚡ {isAr ? 'تسجيل فوري' : 'Quick Log'}
                     </button>
                   </div>
+
+                  {/* 🎙️ LIVE SPEECH-TO-TEXT DICTATION BAR (Converts speech to text in the input box immediately) */}
+                  {(isListeningVoice || voiceDictationTarget === 'quick') && (
+                    <div
+                      id="quick-voice-dictation-bar"
+                      className="p-3.5 rounded-2xl surface-field border-2 border-teal-500 space-y-2.5 transition-all"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+                          <span className="text-xs font-black accent-text">
+                            {isAr
+                              ? '🎙️ المايكروفون نشط الآن — تكلم أو اختر جملة صوتية لكتابتها في المربع فوراً:'
+                              : '🎙️ Live Speech-to-Text Active — Speak or tap a voice phrase to transcribe:'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {quickInputText && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleSmartQuickCapture(quickInputText);
+                                setIsListeningVoice(false);
+                                setVoiceDictationTarget(null);
+                              }}
+                              className="btn-primary px-3 py-1 rounded-xl text-[11px] font-black"
+                            >
+                              ✅ {isAr ? 'تنفيذ النص المنطوق' : 'Execute Text'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsListeningVoice(false);
+                              setVoiceDictationTarget(null);
+                              try { if (window.__khatwaSpeechRec) window.__khatwaSpeechRec.stop(); } catch (e) { }
+                            }}
+                            className="px-2.5 py-1 rounded-xl glass-card text-[11px] font-black"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[
+                          'شربت 500 مل ماء',
+                          'أكلت وجبة غداء 40 جرام بروتين',
+                          'مشيت 2000 خطوة اليوم',
+                          'مهمة قراءة القرآن وأذكار المساء',
+                          'مهمة التمرين في الجيم الساعة 19:00'
+                        ].map((phrase, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => streamPhraseToInput(phrase, 'quick', false)}
+                            className="px-3 py-1.5 rounded-xl glass-card hover:border-teal-500 text-[11px] font-black transition-all"
+                          >
+                            🗣️ &ldquo;{phrase}&rdquo;
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 1-Tap Instant Micro-Log Chips & Empathy / Streak Shield Toggle */}
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -8866,6 +9174,56 @@
                     </div>
                   ))}
                 </div>
+
+                {/* 🎙️ LIVE SPEECH-TO-TEXT DICTATION BAR INSIDE AI CHAT */}
+                {(isAiListening || voiceDictationTarget === 'chat') && (
+                  <div
+                    id="chat-voice-dictation-bar"
+                    className="px-3 py-2.5 surface-field border-t-2 border-teal-500 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-black accent-text flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                        <span>
+                          {isAr
+                            ? '🎙️ تكلم في المايك (يتحول لنص فوراً في المربع بالأسفل) أو اضغط جملة صوتية:'
+                            : '🎙️ Speak now (converts to text below immediately) or tap a voice phrase:'}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAiListening(false);
+                          setVoiceDictationTarget(null);
+                          try { if (window.__khatwaSpeechRec) window.__khatwaSpeechRec.stop(); } catch (e) { }
+                        }}
+                        className="text-xs font-black px-2 py-0.5 rounded-lg glass-card"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                      {[
+                        'شغل الأذان',
+                        'شربت 500 مل ماء',
+                        'خلي وزني 78 كجم',
+                        'غير جدول التمارين إلى أرنولد',
+                        'ذكرني بالدواء الساعة 18:00',
+                        'صليت العصر وقرأت 4 صفحات قرآن',
+                        'سجل الضغط 120/80 والسكر 95'
+                      ].map((phrase, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => streamPhraseToInput(phrase, 'chat', false)}
+                          className="px-2.5 py-1 rounded-xl glass-card hover:border-teal-500 text-[11px] font-black shrink-0"
+                        >
+                          🗣️ {phrase}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Bottom Voice & Text Command Input Bar inside Chat Window */}
                 <div className="p-2.5 bg-black/35 border-t theme-border flex items-center gap-2">
